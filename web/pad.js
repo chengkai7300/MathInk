@@ -1,8 +1,10 @@
 (() => {
   "use strict";
 
-  const LW = 1000;
-  const LH = 600;
+  const LW_DEFAULT = 1000;
+  const LH_DEFAULT = 600;
+  let LW = LW_DEFAULT;
+  let LH = LH_DEFAULT;
 
   const canvas = document.getElementById("pad");
   const ctx = canvas.getContext("2d");
@@ -33,6 +35,16 @@
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
     draw();
+    scheduleViewport();
+  }
+
+  let vpTimer = null;
+  function scheduleViewport() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    clearTimeout(vpTimer);
+    vpTimer = setTimeout(() => {
+      send({ type: "viewport", w: Math.round(W), h: Math.round(H) });
+    }, 350);
   }
 
   function fit() {
@@ -254,17 +266,29 @@
     ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onopen = () => {
       setConn("ok", "已连接");
-      send({ type: "hello", role: "pad" });
+      send({
+        type: "hello",
+        role: "pad",
+        viewport: { w: Math.round(W), h: Math.round(H) },
+      });
     };
     ws.onmessage = (ev) => {
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
 
       if (msg.type === "state") {
+        if (msg.canvas) {
+          LW = msg.canvas.w;
+          LH = msg.canvas.h;
+        }
         strokes = msg.strokes || [];
         current = null;
         drawing = false;
         updateInfo();
+        draw();
+      } else if (msg.type === "canvas") {
+        LW = msg.w;
+        LH = msg.h;
         draw();
       } else if (msg.type === "peers") {
         if ((msg.hosts || 0) > 0) setConn("ok", "主机已连接");

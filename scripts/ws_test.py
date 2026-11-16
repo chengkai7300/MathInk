@@ -15,14 +15,18 @@ STROKES = [
 ]
 
 
-async def pad_task(url: str, engine: str, host_ready: asyncio.Event):
+async def pad_task(url: str, engine: str):
     async with websockets.connect(url) as ws:
-        await ws.send(json.dumps({"type": "hello", "role": "pad"}))
-        while not host_ready.is_set():
-            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
-            if msg.get("type") == "peers" and msg.get("hosts", 0) > 0:
-                host_ready.set()
+        await ws.send(
+            json.dumps(
+                {"type": "hello", "role": "pad", "viewport": {"w": 1024, "h": 700}}
+            )
+        )
+        # start from a clean canvas so a cached last result cannot short-circuit the test
+        await ws.send(json.dumps({"type": "clear"}))
         await asyncio.sleep(0.2)
+        # give the fake host time to connect/register (other real clients may exist)
+        await asyncio.sleep(1.3)
         for s in STROKES:
             await ws.send(json.dumps({"type": "stroke", "stroke": s}))
         await asyncio.sleep(0.2)
@@ -53,10 +57,7 @@ async def main():
 
     results: list = []
     seen = {"strokes": 0}
-    host_ready = asyncio.Event()
-    await asyncio.gather(
-        host_task(args.url, results, seen), pad_task(args.url, args.engine, host_ready)
-    )
+    await asyncio.gather(host_task(args.url, results, seen), pad_task(args.url, args.engine))
     assert results, "no result received"
     print("strokes received live:", seen["strokes"])
     print("RESULT:", results[0]["latex"], results[0]["timings"])

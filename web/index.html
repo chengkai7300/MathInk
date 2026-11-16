@@ -38,11 +38,11 @@
       <div class="canvas-wrap">
         <canvas id="mirror"></canvas>
         <div id="hint" class="empty-hint">
-          用平板扫描右侧二维码，在平板上书写
+          用平板书写，或直接在这里用鼠标 / 触屏写
         </div>
       </div>
       <div class="footnote">
-        <span>逻辑画布 1000 × 600</span>
+        <span id="canvas-info">逻辑画布 1000 × 600</span>
         <span id="stroke-info">0 笔</span>
       </div>
     </section>
@@ -56,7 +56,7 @@
         <button id="copy" class="btn btn-primary" disabled>复制 LaTeX</button>
       </div>
 
-      <div id="render" class="render"><span class="placeholder">平板上写完，结果会出现在这里</span></div>
+      <div id="render" class="render"><span class="placeholder">书写完成后，结果会出现在这里</span></div>
 
       <label class="field-label" for="latex">LaTeX 源码</label>
       <textarea id="latex" spellcheck="false" placeholder="\frac{1}{2}"></textarea>

@@ -1,4 +1,4 @@
-"""Shared session state between the tablet pad and the desktop host."""
+"""Shared session state between input surfaces (tablet pad / desktop host)."""
 
 from __future__ import annotations
 
@@ -14,9 +14,30 @@ class Session:
     pads: set[Any] = field(default_factory=set)
     hosts: set[Any] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    canvas_w: int = 1000
+    canvas_h: int = 600
+
+    def canvas(self) -> dict[str, int]:
+        return {"w": self.canvas_w, "h": self.canvas_h}
 
     def state_message(self) -> dict[str, Any]:
-        return {"type": "state", "strokes": self.strokes}
+        return {"type": "state", "strokes": self.strokes, "canvas": self.canvas()}
+
+    def set_canvas(self, w: int, h: int) -> bool:
+        """Resize the logical canvas, scaling existing strokes proportionally."""
+        w = max(200, min(2000, int(w)))
+        h = max(200, min(2000, int(h)))
+        if w == self.canvas_w and h == self.canvas_h:
+            return False
+        sx = w / self.canvas_w
+        sy = h / self.canvas_h
+        for s in self.strokes:
+            for p in s.get("points", []):
+                p["x"] = round(float(p["x"]) * sx, 2)
+                p["y"] = round(float(p["y"]) * sy, 2)
+            s["width"] = round(float(s.get("width", 3)) * (sx + sy) / 2, 2)
+        self.canvas_w, self.canvas_h = w, h
+        return True
 
     async def broadcast(self, message: dict[str, Any], exclude: Any = None) -> None:
         dead = []

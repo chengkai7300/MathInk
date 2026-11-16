@@ -1,13 +1,16 @@
 (() => {
   "use strict";
 
-  const LW = 1000;
-  const LH = 600;
+  const LW_DEFAULT = 1000;
+  const LH_DEFAULT = 600;
+  let LW = LW_DEFAULT;
+  let LH = LH_DEFAULT;
 
   const canvas = document.getElementById("mirror");
   const ctx = canvas.getContext("2d");
   const hint = document.getElementById("hint");
   const strokeInfo = document.getElementById("stroke-info");
+  const canvasInfo = document.getElementById("canvas-info");
   const latexBox = document.getElementById("latex");
   const renderBox = document.getElementById("render");
   const timingsEl = document.getElementById("timings");
@@ -23,11 +26,26 @@
 
   let strokes = [];
   let preview = null;
+  let current = null;
+  let drawing = false;
   let mode = "vlm";
   let ws = null;
   let lastLatex = "";
   let history = [];
   let W = 0, H = 0, dpr = 1;
+  let previewTimer = 0;
+
+  function toLogical(e) {
+    const r = canvas.getBoundingClientRect();
+    const { scale, ox, oy } = fit();
+    const x = (e.clientX - r.left - ox) / scale;
+    const y = (e.clientY - r.top - oy) / scale;
+    return { x: Math.max(0, Math.min(LW, x)), y: Math.max(0, Math.min(LH, y)) };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
 
   function resize() {
     const r = canvas.getBoundingClientRect();
@@ -93,17 +111,25 @@
 
     for (const s of strokes) pathStroke(s);
     if (preview) pathStroke(preview);
+    if (current) pathStroke(current);
 
-    // logical canvas border
+    // logical canvas border + dim the non-writable margins
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.strokeStyle = "#e8ebf3";
+    const rx = ox, ry = oy, rw = LW * scale, rh = LH * scale;
+    ctx.fillStyle = "rgba(15, 23, 42, .04)";
+    ctx.fillRect(0, 0, W, ry);
+    ctx.fillRect(0, ry + rh, W, H - (ry + rh));
+    ctx.fillRect(0, ry, rx, rh);
+    ctx.fillRect(rx + rw, ry, W - (rx + rw), rh);
+    ctx.strokeStyle = "#dfe4ef";
     ctx.lineWidth = 1;
-    ctx.strokeRect(dpr * ox, dpr * oy, dpr * LW * scale, dpr * LH * scale);
+    ctx.strokeRect(rx, ry, rw, rh);
   }
 
   function updateInfo() {
     strokeInfo.textContent = `${strokes.length} 笔`;
-    hint.classList.toggle("hidden", strokes.length > 0);
+    canvasInfo.textContent = `逻辑画布 ${Math.round(LW)} × ${Math.round(LH)}`;
+    hint.classList.toggle("hidden", strokes.length > 0 || drawing);
     recognizeBtn.disabled = strokes.length === 0;
     clearBtn.disabled = strokes.length === 0;
   }
@@ -224,6 +250,48 @@
     });
   });
 
+  // ------------------------------------------------------------ desktop input
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    const p = toLogical(e);
+    current = { points: [{ x: p.x, y: p.y }], width: e.pointerType === "pen" ? 3.5 : 3.5 };
+    drawing = true;
+    hint.classList.add("hidden");
+    draw();
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drawing || !current) return;
+    const p = toLogical(e);
+    const last = current.points[current.points.length - 1];
+    if (Math.hypot(p.x - last.x, p.y - last.y) < 1.2) return;
+    current.points.push({ x: p.x, y: p.y });
+    draw();
+    const now = performance.now();
+    if (now - previewTimer > 70) {
+      previewTimer = now;
+      send({ type: "preview", stroke: current });
+    }
+  });
+
+  function endHostStroke() {
+    if (!drawing || !current) return;
+    drawing = false;
+    const stroke = { points: current.points, width: current.width };
+    strokes.push(stroke);
+    current = null;
+    send({ type: "stroke", stroke });
+    send({ type: "preview", stroke: null });
+    updateInfo();
+    draw();
+  }
+
+  canvas.addEventListener("pointerup", endHostStroke);
+  canvas.addEventListener("pointercancel", endHostStroke);
+
   // ------------------------------------------------------------ websocket
 
   function setPeer(connected) {
@@ -243,10 +311,18 @@
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === "state") {
+        if (msg.canvas) {
+          LW = msg.canvas.w;
+          LH = msg.canvas.h;
+        }
         strokes = msg.strokes || [];
         preview = null;
         draw();
         updateInfo();
+      } else if (msg.type === "canvas") {
+        LW = msg.w;
+        LH = msg.h;
+        draw();
       } else if (msg.type === "stroke") {
         strokes.push(msg.stroke);
         preview = null;

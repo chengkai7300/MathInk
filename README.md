@@ -1,5 +1,6 @@
 # MathInk
 
+[![CI](https://github.com/chengkai7300/MathInk/actions/workflows/ci.yml/badge.svg)](https://github.com/chengkai7300/MathInk/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/chengkai7300/MathInk?include_prereleases&sort=semver)](https://github.com/chengkai7300/MathInk/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -11,7 +12,7 @@
 | --- | --- |
 | ![主机端](docs/assets/host.png) | ![平板端](docs/assets/pad.png) |
 
-> 状态：**v0.1.0-test**（首个公开测试版，2026-11-16）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
+> 状态：**v0.1.1-test**（2026-11-16）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
 > 非商用项目；CROHME 数据与权重仅限研究/自用。变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使用方式
@@ -35,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 
 1. **PC** 打开 <http://127.0.0.1:8848>，右侧会显示二维码和地址 `http://<局域网IP>:8848/pad`。
 2. **平板** 连同一个 Wi-Fi，扫码（或手动输入地址）打开书写页。
-3. 用触控笔在平板上写公式；停笔约 0.9 秒自动识别，PC 上出现渲染结果，点「复制 LaTeX」即可粘贴到文档。
+3. 用触控笔在平板上写公式（也可以直接在 PC 左侧画布上用鼠标写）；停笔约 0.9 秒自动识别，PC 上出现渲染结果，点「复制 LaTeX」即可粘贴到文档。
 
 > 首次连接若平板打不开：在 Windows 防火墙提示里允许 Python 访问**专用网络**；
 > 或管理员执行
@@ -45,12 +46,14 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 ## 功能
 
 - **双端实时同步**：平板笔画经 WebSocket 推到主机，主机实时镜像书写过程
+- **两种输入方式**：平板触控笔，或直接在 PC 主机画布上用鼠标 / 触屏写，共用同一画布
 - 平板端：触控笔压感变宽、手掌防误触、撤销/清空/识别、自动识别、全屏
-- 主机端：KaTeX 预览、可编辑 LaTeX、一键复制、最近 8 条历史（点击即复制）
+- 主机端：可直接书写、KaTeX 预览、可编辑 LaTeX、一键复制、最近 8 条历史（点击即复制）
 - 二维码配对：不用记 IP，扫码即用
 - 双引擎：高精度（VLM，GPU）/ 极速（CoMER，CPU）
 - 全离线：KaTeX、模型、前端资源都在本地
-- 画布自适应：主机和 pad 都按逻辑画布 1000×600 等比缩放，两端一致
+- **画布自适应**：逻辑画布按设备视口比例动态生成（横屏约 1000×684、竖屏约 630×900），
+  整块画布都能写；旋转设备时自动重算，已有笔画按比例缩放
 
 ## 实测（CROHME 2019）
 

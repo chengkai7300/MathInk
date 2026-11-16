@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
     engine = None
 
 
-app = FastAPI(title="MathInk", version="0.1.0-test", lifespan=lifespan)
+app = FastAPI(title="MathInk", version="0.1.1-test", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -213,6 +213,25 @@ def _dicts_to_strokes(items) -> list:
     return out
 
 
+def _apply_viewport(viewport) -> bool:
+    """Match the logical canvas aspect to the input device viewport."""
+    try:
+        vw = float(viewport.get("w", 0))
+        vh = float(viewport.get("h", 0))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if vw <= 0 or vh <= 0:
+        return False
+    aspect = vw / vh
+    if aspect >= 1:
+        cw, ch = 1000, round(1000 / aspect)
+    else:
+        ch, cw = 900, round(900 * aspect)
+    cw = max(400, min(1200, int(cw)))
+    ch = max(400, min(1200, int(ch)))
+    return session.set_canvas(cw, ch)
+
+
 async def _handle_message(ws: WebSocket, role: str, msg: dict) -> None:
     kind = msg.get("type")
     if kind == "stroke":
@@ -225,7 +244,11 @@ async def _handle_message(ws: WebSocket, role: str, msg: dict) -> None:
         await session.broadcast({"type": "stroke", "stroke": stroke}, exclude=ws)
     elif kind == "preview":
         stroke = _clean_stroke(msg.get("stroke")) if msg.get("stroke") else None
-        await session.broadcast_hosts({"type": "preview", "stroke": stroke})
+        await session.broadcast({"type": "preview", "stroke": stroke}, exclude=ws)
+    elif kind == "viewport":
+        if _apply_viewport(msg):
+            await session.broadcast({"type": "canvas", **session.canvas()})
+            await session.broadcast(session.state_message())
     elif kind == "undo":
         if session.strokes:
             session.strokes.pop()
@@ -252,6 +275,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
             role = hello["role"]
         (session.pads if role == "pad" else session.hosts).add(ws)
         registered = True
+        if role == "pad" and isinstance(hello, dict) and hello.get("viewport"):
+            if _apply_viewport(hello["viewport"]):
+                await session.broadcast({"type": "canvas", **session.canvas()})
         await ws.send_json(session.state_message())
         if session.last_result is not None:
             await ws.send_json(session.last_result)
