@@ -6,8 +6,8 @@
 | --- | --- |
 | ![主机端](docs/assets/host.png) | ![平板端](docs/assets/pad.png) |
 
-> 状态：v0.4，2026-11-16。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
-> 非商用项目；CROHME 数据与权重仅限研究/自用。
+> 状态：**v0.1.0-test**（首个公开测试版，2026-11-16）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
+> 非商用项目；CROHME 数据与权重仅限研究/自用。变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使用方式
 
@@ -87,11 +87,27 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 - [方案收敛与实现记录](docs/02-方案收敛与实现记录.md)
 - [输入方案调研：鼠标之外的选择](docs/03-输入方案调研.md)
 
-## 许可与致谢
+## 开发与评测
 
-- Uni-MuMER：Apache-2.0；基座 Qwen3-VL-2B（Apache-2.0）
-- CoMER：ECCV 2022；ONNX 权重由 [ink-on](https://github.com/kimseungdae/ink-on)（Apache-2.0）打包
-- llama.cpp：MIT
-- CROHME 数据：仅限研究，禁止商用
-- KaTeX：MIT
-- 本项目仅用于学习/研究，非商用
+```powershell
+# 单元测试（CI 也会跑）
+.\.venv\Scripts\python tests\test_smoke.py
+
+# 双端 WebSocket 冒烟测试（需服务已启动）
+.\.venv\Scripts\python scripts\ws_test.py
+
+# CROHME 评测数据（仅研究用途，约 30 MB）
+.\.venv\Scripts\python scripts\fetch_crohme.py
+.\.venv\Scripts\python scripts\eval_crohme.py --gt-max-len 5 --limit 300 --variants official
+.\.venv\Scripts\python scripts\eval_vlm.py --gt-max-len 5 --limit 0
+```
+
+评测结果写入 `_research/`（已 gitignore），不会进入仓库。
+
+## 许可证
+
+- 本仓库**代码**：MIT（见 [LICENSE](LICENSE)）
+- 模型权重与评测数据：不随仓库分发，下载后遵循各自许可；详见 [THIRD_PARTY.md](THIRD_PARTY.md)
+- 商用前请替换掉基于 CROHME 训练的权重，并逐项复核许可
+
+致谢：Uni-MuMER、Qwen3-VL、CoMER、llama.cpp、KaTeX、CROHME。

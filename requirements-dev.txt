@@ -1,0 +1,4 @@
+# Extra tools for development / evaluation (not needed to run the app)
+numpy>=1.26
+pillow>=10.0
+websockets>=12
