@@ -1,6 +1,12 @@
 # MathInk
 
+[![CI](https://github.com/chengkai7300/MathInk/actions/workflows/ci.yml/badge.svg)](https://github.com/chengkai7300/MathInk/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/chengkai7300/MathInk?include_prereleases&sort=semver)](https://github.com/chengkai7300/MathInk/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 平板书写，主机取 LaTeX。局域网双端：**平板当输入板，PC 当显示/复制端**，模型全部离线。
+
+项目地址：<https://github.com/chengkai7300/MathInk>
 
 | 主机端（PC） | 平板端（触控笔） |
 | --- | --- |
@@ -12,7 +18,11 @@
 ## 使用方式
 
 ```powershell
-# 首次：创建虚拟环境、装依赖
+# 0) 克隆（或直接下载源码包）
+git clone https://github.com/chengkai7300/MathInk.git
+cd MathInk
+
+# 1) 创建虚拟环境、装依赖
 python -m venv .venv
 .\.venv\Scripts\pip install -r backend\requirements.txt
 
