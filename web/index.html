@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MathInk · 手写公式转 LaTeX</title>
+  <title>MathInk · 主机端</title>
   <link rel="stylesheet" href="/vendor/katex/dist/katex.min.css" />
   <link rel="stylesheet" href="/style.css" />
 </head>
@@ -12,44 +12,37 @@
     <div class="brand">
       <span class="logo">∫</span>
       <div>
-        <h1>MathInk</h1>
-        <p>鼠标手写数学公式 → LaTeX</p>
+        <h1>MathInk <span class="role">主机端</span></h1>
+        <p>平板书写 · 主机显示 · 一键复制 LaTeX</p>
       </div>
     </div>
     <div class="status">
       <span id="engine-badge" class="badge badge-muted">连接中…</span>
-      <span id="latency-badge" class="badge badge-muted">—</span>
+      <span id="peer-badge" class="badge badge-muted">等待平板</span>
     </div>
   </header>
 
   <main class="layout">
     <section class="card canvas-card">
       <div class="toolbar">
-        <div class="tools">
-          <button id="undo" class="btn btn-ghost" title="撤销 (Ctrl+Z)">撤销</button>
-          <button id="clear" class="btn btn-ghost" title="清空">清空</button>
-          <button id="demo" class="btn btn-ghost" title="载入示例">示例</button>
-        </div>
+        <div class="panel-title">书写镜像</div>
         <div class="tools right">
-          <div class="seg" id="mode" role="group" aria-label="识别模式">
-            <button class="seg-btn" data-mode="comer" title="CoMER，CPU，约 0.1–0.4 s">极速</button>
-            <button class="seg-btn active" data-mode="vlm" title="Uni-MuMER 2B，GPU，约 60–260 ms">高精度</button>
+          <div class="seg" id="mode" role="group" aria-label="重识别引擎">
+            <button class="seg-btn" data-mode="comer" title="CoMER，CPU">极速</button>
+            <button class="seg-btn active" data-mode="vlm" title="Uni-MuMER 2B，GPU">高精度</button>
           </div>
-          <label class="switch" title="停笔后自动识别">
-            <input type="checkbox" id="auto" checked />
-            <span>自动识别</span>
-          </label>
-          <button id="recognize" class="btn btn-primary" title="识别 (Ctrl+Enter)">识别</button>
+          <button id="recognize" class="btn btn-ghost" disabled>重新识别</button>
+          <button id="clear" class="btn btn-ghost" disabled>清空</button>
         </div>
       </div>
       <div class="canvas-wrap">
-        <canvas id="pad"></canvas>
-        <div id="empty-hint" class="empty-hint">
-          按住鼠标左键书写，支持多笔、分式与上下标
+        <canvas id="mirror"></canvas>
+        <div id="hint" class="empty-hint">
+          用平板扫描右侧二维码，在平板上书写
         </div>
       </div>
       <div class="footnote">
-        <span>单公式 · 纯数学 · 本地推理</span>
+        <span>逻辑画布 1000 × 600</span>
         <span id="stroke-info">0 笔</span>
       </div>
     </section>
@@ -60,19 +53,36 @@
           <h2>识别结果</h2>
           <span id="confidence" class="conf"></span>
         </div>
-        <button id="copy" class="btn btn-ghost" title="复制 LaTeX">复制</button>
+        <button id="copy" class="btn btn-primary" disabled>复制 LaTeX</button>
       </div>
-      <div id="render" class="render"><span class="placeholder">识别后在此预览</span></div>
+
+      <div id="render" class="render"><span class="placeholder">平板上写完，结果会出现在这里</span></div>
+
       <label class="field-label" for="latex">LaTeX 源码</label>
       <textarea id="latex" spellcheck="false" placeholder="\frac{1}{2}"></textarea>
+
       <div class="result-foot">
         <span id="timings" class="timings">—</span>
         <span id="message" class="message"></span>
+      </div>
+
+      <div class="connect">
+        <img id="qr" alt="平板连接二维码" width="96" height="96" />
+        <div class="connect-text">
+          <div class="connect-title">平板连接</div>
+          <code id="pad-url">http://…/pad</code>
+          <div class="connect-hint">平板与主机需在同一局域网；首次连接请允许 Windows 防火墙。</div>
+        </div>
+      </div>
+
+      <div class="history">
+        <div class="history-head">最近识别</div>
+        <div id="history" class="history-list"><span class="history-empty">暂无</span></div>
       </div>
     </section>
   </main>
 
   <script src="/vendor/katex/dist/katex.min.js"></script>
-  <script src="/app.js"></script>
+  <script src="/host.js"></script>
 </body>
 </html>

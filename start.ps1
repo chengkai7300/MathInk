@@ -23,5 +23,6 @@ if (-not (Test-Path "models\vlm\model-q4km.gguf")) {
 
 $port = if ($env:MATHINK_PORT) { $env:MATHINK_PORT } else { "8848" }
 Write-Host "启动 MathInk: http://127.0.0.1:$port"
+Write-Host "平板端: http://<本机局域网IP>:$port/pad （主机页面会显示二维码）"
 $env:PYTHONPATH = "backend"
-& $py -m uvicorn app.main:app --host 127.0.0.1 --port $port
+& $py -m uvicorn app.main:app --host 0.0.0.0 --port $port

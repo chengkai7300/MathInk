@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import asyncio
+import io
 import math
 import os
+import socket
 import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+import qrcode
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -17,6 +28,7 @@ from . import latex_utils
 from .engines.comer import ComerEngine
 from .engines.vlm import LlamaServer, VlmEngine
 from .image_ops import Point, Stroke
+from .session import Session
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
@@ -29,10 +41,13 @@ LLAMA_EXE = Path(
     )
 )
 VLM_PORT = int(os.environ.get("MATHINK_VLM_PORT", "8849"))
+PAD_W, PAD_H = 1000.0, 600.0
 
 engine: ComerEngine | None = None
 vlm: VlmEngine | None = None
 vlm_server: LlamaServer | None = None
+session = Session()
+_lan_ip: str | None = None
 
 
 def _warmup_strokes() -> list[Stroke]:
@@ -63,7 +78,7 @@ async def lifespan(app: FastAPI):
     engine = None
 
 
-app = FastAPI(title="MathInk", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="MathInk", version="0.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -75,6 +90,7 @@ app.add_middleware(
 class PointIn(BaseModel):
     x: float
     y: float
+    pressure: float | None = None
 
 
 class StrokeIn(BaseModel):
@@ -88,10 +104,10 @@ class RecognizeIn(BaseModel):
     engine: str = Field(default="auto", pattern="^(auto|comer|vlm)$")
 
 
-def _to_strokes(req: RecognizeIn) -> list[Stroke]:
+def _to_strokes(items) -> list[Stroke]:
     return [
         Stroke(points=[Point(p.x, p.y) for p in s.points], width=s.width)
-        for s in req.strokes
+        for s in items
     ]
 
 
@@ -130,6 +146,218 @@ def _vlm_result(rec, total: float) -> dict:
     }
 
 
+# ---------------------------------------------------------------- recognition
+
+
+def _recognize_sync(strokes: list[Stroke], engine_name: str):
+    use_vlm = engine_name == "vlm" or (
+        engine_name == "auto" and vlm is not None and vlm.available()
+    )
+    if use_vlm:
+        if vlm is None or not vlm.available():
+            raise RuntimeError("VLM model not installed")
+        return vlm.recognize_strokes(strokes)
+    if engine is None:
+        raise RuntimeError("engine not loaded")
+    return engine.recognize_strokes(strokes)
+
+
+async def _recognize_session(engine_name: str, request_id: str | None = None) -> dict | None:
+    if not session.strokes:
+        return None
+    strokes = _to_strokes(_dicts_to_strokes(session.strokes))
+    async with session.lock:
+        t0 = time.perf_counter()
+        rec = await asyncio.to_thread(_recognize_sync, strokes, engine_name)
+        total = round((time.perf_counter() - t0) * 1000, 1)
+        payload = _vlm_result(rec, total) if rec.engine == "vlm" else _comer_result(rec, total)
+    payload["type"] = "result"
+    payload["request_id"] = request_id
+    session.last_result = payload
+    await session.broadcast(payload)
+    return payload
+
+
+# ---------------------------------------------------------------- websockets
+
+
+def _clean_stroke(raw) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    points = []
+    for p in raw.get("points", [])[:4000]:
+        try:
+            x = float(p.get("x", 0))
+            y = float(p.get("y", 0))
+        except (TypeError, ValueError):
+            continue
+        x = min(PAD_W, max(0.0, x))
+        y = min(PAD_H, max(0.0, y))
+        points.append({"x": round(x, 2), "y": round(y, 2)})
+    if not points:
+        return None
+    try:
+        width = float(raw.get("width", 3))
+    except (TypeError, ValueError):
+        width = 3.0
+    width = min(16.0, max(1.0, width))
+    return {"points": points, "width": round(width, 2)}
+
+
+def _dicts_to_strokes(items) -> list:
+    out = []
+    for s in items:
+        pts = [Point(float(p["x"]), float(p["y"])) for p in s.get("points", [])]
+        if pts:
+            out.append(Stroke(points=pts, width=float(s.get("width", 3))))
+    return out
+
+
+async def _handle_message(ws: WebSocket, role: str, msg: dict) -> None:
+    kind = msg.get("type")
+    if kind == "stroke":
+        stroke = _clean_stroke(msg.get("stroke"))
+        if stroke is None:
+            return
+        session.strokes.append(stroke)
+        if len(session.strokes) > 500:
+            session.strokes = session.strokes[-500:]
+        await session.broadcast({"type": "stroke", "stroke": stroke}, exclude=ws)
+    elif kind == "preview":
+        stroke = _clean_stroke(msg.get("stroke")) if msg.get("stroke") else None
+        await session.broadcast_hosts({"type": "preview", "stroke": stroke})
+    elif kind == "undo":
+        if session.strokes:
+            session.strokes.pop()
+        await session.broadcast(session.state_message())
+    elif kind == "clear":
+        session.strokes = []
+        session.last_result = None
+        await session.broadcast(session.state_message())
+    elif kind == "recognize":
+        try:
+            await _recognize_session(msg.get("engine", "auto"), msg.get("request_id"))
+        except Exception as exc:
+            await session.broadcast({"type": "error", "message": str(exc)})
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket) -> None:
+    await ws.accept()
+    role = "host"
+    registered = False
+    try:
+        hello = await ws.receive_json()
+        if isinstance(hello, dict) and hello.get("role") in ("pad", "host"):
+            role = hello["role"]
+        (session.pads if role == "pad" else session.hosts).add(ws)
+        registered = True
+        await ws.send_json(session.state_message())
+        if session.last_result is not None:
+            await ws.send_json(session.last_result)
+        await session.broadcast({"type": "peers", "pads": len(session.pads), "hosts": len(session.hosts)})
+
+        while True:
+            msg = await ws.receive_json()
+            if isinstance(msg, dict):
+                await _handle_message(ws, role, msg)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        if registered:
+            session.pads.discard(ws)
+            session.hosts.discard(ws)
+            try:
+                await session.broadcast(
+                    {"type": "peers", "pads": len(session.pads), "hosts": len(session.hosts)}
+                )
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------- HTTP
+
+
+def _lan_ip_address() -> str:
+    global _lan_ip
+    if _lan_ip:
+        return _lan_ip
+    override = os.environ.get("MATHINK_LAN_IP")
+    if override:
+        _lan_ip = override
+        return _lan_ip
+
+    candidates: list[str] = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            candidates.append(info[4][0])
+    except Exception:
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.168.1.1", 80))
+            candidates.append(s.getsockname()[0])
+        finally:
+            s.close()
+    except Exception:
+        pass
+
+    def score(ip: str) -> int:
+        if ip.startswith("192.168."):
+            return 0
+        if ip.startswith("10."):
+            return 1
+        if ip.startswith("172."):
+            try:
+                second = int(ip.split(".")[1])
+                if 16 <= second <= 31:
+                    return 2
+            except ValueError:
+                pass
+        if ip.startswith("198.18.") or ip.startswith("198.19."):
+            return 90
+        if ip.startswith("169.254."):
+            return 95
+        if ip.startswith("127."):
+            return 99
+        return 50
+
+    unique = [ip for ip in dict.fromkeys(candidates) if ip]
+    if unique:
+        unique.sort(key=score)
+        _lan_ip = unique[0]
+    else:
+        _lan_ip = "127.0.0.1"
+    return _lan_ip
+
+
+@app.get("/api/lan-info")
+def lan_info(request: Request) -> dict:
+    port = request.url.port or 8848
+    return {"ip": _lan_ip_address(), "port": port, "pad_url": f"http://{_lan_ip_address()}:{port}/pad"}
+
+
+@app.get("/pad")
+def pad_page() -> FileResponse:
+    return FileResponse(WEB_DIR / "pad.html")
+
+
+@app.get("/api/qr.png")
+def qr_png(data: str) -> Response:
+    if not data or len(data) > 512:
+        raise HTTPException(status_code=400, detail="bad data")
+    qr = qrcode.QRCode(border=2, box_size=8)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -142,6 +370,7 @@ def health() -> dict:
             "ready": bool(vlm_server and vlm_server.healthy()),
             "model_dir": str(VLM_DIR),
         },
+        "peers": {"pads": len(session.pads), "hosts": len(session.hosts)},
     }
 
 
@@ -150,18 +379,18 @@ def engines() -> dict:
     return {
         "engines": [
             {
-                "id": "comer",
-                "name": "CoMER INT8",
-                "size_mb": 7.2,
-                "ready": engine is not None,
-                "note": "CROHME 手写单行公式，CPU，约 0.1–0.4 s",
-            },
-            {
                 "id": "vlm",
                 "name": "Uni-MuMER 2B",
                 "size_mb": 1550,
                 "ready": bool(vlm and vlm.available()),
-                "note": "Qwen3-VL 2B 微调，GPU，约 0.5–1.5 s",
+                "note": "GPU，约 60–120 ms",
+            },
+            {
+                "id": "comer",
+                "name": "CoMER INT8",
+                "size_mb": 7.2,
+                "ready": engine is not None,
+                "note": "CPU 兜底，约 0.1–0.4 s",
             },
         ]
     }
@@ -169,33 +398,17 @@ def engines() -> dict:
 
 @app.post("/api/recognize")
 def recognize(req: RecognizeIn) -> JSONResponse:
-    if engine is None:
-        raise HTTPException(status_code=503, detail="engine not loaded")
-    strokes = _to_strokes(req)
+    strokes = _to_strokes(req.strokes)
     if not any(s.points for s in strokes):
         raise HTTPException(status_code=400, detail="empty strokes")
-
-    use_vlm = req.engine == "vlm" or (
-        req.engine == "auto" and vlm is not None and vlm.available()
-    )
-    if use_vlm:
-        if vlm is None or not vlm.available():
-            raise HTTPException(status_code=503, detail="VLM model not installed")
-        t0 = time.perf_counter()
-        try:
-            rec = vlm.recognize_strokes(strokes)
-        except Exception as exc:  # keep the API usable if the server fails
-            if req.engine == "vlm":
-                raise HTTPException(status_code=502, detail=f"VLM error: {exc}") from exc
-            rec = None
-        if rec is not None:
-            total = round((time.perf_counter() - t0) * 1000, 1)
-            return JSONResponse(_vlm_result(rec, total))
-
     t0 = time.perf_counter()
-    rec = engine.recognize_strokes(strokes, beam_width=req.beam)
+    try:
+        rec = _recognize_sync(strokes, req.engine)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     total = round((time.perf_counter() - t0) * 1000, 1)
-    return JSONResponse(_comer_result(rec, total))
+    payload = _vlm_result(rec, total) if rec.engine == "vlm" else _comer_result(rec, total)
+    return JSONResponse(payload)
 
 
 if WEB_DIR.exists():

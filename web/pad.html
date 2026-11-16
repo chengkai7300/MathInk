@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>MathInk · 平板书写</title>
+  <link rel="stylesheet" href="/pad.css" />
+</head>
+<body>
+  <header class="padbar">
+    <div class="conn">
+      <span id="dot" class="dot"></span>
+      <span id="conn-text">连接中…</span>
+    </div>
+    <div class="tools">
+      <select id="mode" title="识别引擎">
+        <option value="vlm">高精度</option>
+        <option value="comer">极速</option>
+      </select>
+      <label class="auto"><input type="checkbox" id="auto" checked /> 自动</label>
+      <button id="undo" class="btn">撤销</button>
+      <button id="clear" class="btn">清空</button>
+      <button id="recognize" class="btn primary">识别</button>
+      <button id="full" class="btn icon" title="全屏">⛶</button>
+    </div>
+  </header>
+
+  <div class="padwrap">
+    <canvas id="pad"></canvas>
+    <div id="hint" class="hint">用触控笔在这里书写公式</div>
+  </div>
+
+  <footer class="padfoot">
+    <span>停笔约 0.9 秒自动识别 · 建议横屏 · 结果在主机上显示</span>
+    <span id="info">0 笔</span>
+  </footer>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/pad.js"></script>
+</body>
+</html>

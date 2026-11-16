@@ -1,93 +1,85 @@
 # MathInk
 
-手写数学公式 → LaTeX。本地服务 + 浏览器界面，模型全部离线，单公式 **< 1 秒**。
+平板书写，主机取 LaTeX。局域网双端：**平板当输入板，PC 当显示/复制端**，模型全部离线。
 
-![界面截图](docs/assets/screenshot.png)
+| 主机端（PC） | 平板端（触控笔） |
+| --- | --- |
+| ![主机端](docs/assets/host.png) | ![平板端](docs/assets/pad.png) |
 
-> 状态：v0.3，2026-11-16。双引擎：**Uni-MuMER 2B（GPU，默认）** + CoMER INT8（CPU，兜底）。
+> 状态：v0.4，2026-11-16。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
 > 非商用项目；CROHME 数据与权重仅限研究/自用。
 
-## 快速开始
+## 使用方式
 
 ```powershell
-# 1) 下载模型与运行时（首次约 1.6 GB）
+# 首次：装依赖、下模型（CoMER 必装；VLM 可选但推荐）
 .\.venv\Scripts\python scripts\download_models.py --engine comer
 .\.venv\Scripts\python scripts\download_models.py --engine vlm --llama
 
-# 2) 启动
+# 启动（监听 0.0.0.0，局域网可访问）
 powershell -ExecutionPolicy Bypass -File start.ps1
 ```
 
-打开 <http://127.0.0.1:8848>，按住鼠标/触控笔写公式，停笔约 0.9 s 自动识别；
-也可以点「示例」先看效果。
+1. **PC** 打开 <http://127.0.0.1:8848>，右侧会显示二维码和地址 `http://<局域网IP>:8848/pad`。
+2. **平板** 连同一个 Wi-Fi，扫码（或手动输入地址）打开书写页。
+3. 用触控笔在平板上写公式；停笔约 0.9 秒自动识别，PC 上出现渲染结果，点「复制 LaTeX」即可粘贴到文档。
 
-> 没有 GPU 或不想下 1.5 GB 模型？只装 CoMER 也能用，界面里切到「极速」。
-
-## 实测（CROHME 2019）
-
-| 引擎 | 输入 | 完全正确 | ≤1 处修改 | p50 |
-| --- | --- | --- | --- | --- |
-| **Uni-MuMER 2B Q4** | ≤5 符号（209 张） | **81.3%** | **93.3%** | **61 ms** |
-| Uni-MuMER 2B Q4 | 400 张全长度 | **72.3%** | 86.0% | 120 ms |
-| CoMER INT8 | ≤5 符号（209 张） | 73.7% | 91.4% | 224 ms |
-| CoMER INT8 | 400 张全长度 | 58.0% | — | 537 ms |
-
-画布实测：`x+1` 约 55–105 ms（VLM / CoMER），700 px 长公式约 360 ms（CoMER）。
-**短公式 81% 无需修改、93% 改一处即可**；长公式 VLM 也明显强于 CoMER（≥15 符号 130/195 全对）。
+> 首次连接若平板打不开：在 Windows 防火墙提示里允许 Python 访问**专用网络**；
+> 或管理员执行
+> `netsh advfirewall firewall add rule name="MathInk 8848" dir=in action=allow protocol=TCP localport=8848`。
+> 若主机页面显示的 IP 不对（VPN/虚拟网卡），启动前设 `MATHINK_LAN_IP=192.168.x.x`。
 
 ## 功能
 
-- 鼠标/触控/触控笔画布，自适应浏览器窗口大小；撤销、清空、示例
-- 双引擎切换：高精度（VLM，GPU）/ 极速（CoMER，CPU）
-- 停笔自动识别（可关）
-- KaTeX 本地预览 + 可编辑 LaTeX 源码 + 实时重渲染 + 一键复制
-- 实时显示渲染/VLM/编码/解码/往返耗时；超过 1 s 变黄
-- 页脚显示内容尺寸，写得过小/过大时提示
+- **双端实时同步**：平板笔画经 WebSocket 推到主机，主机实时镜像书写过程
+- 平板端：触控笔压感变宽、手掌防误触、撤销/清空/识别、自动识别、全屏
+- 主机端：KaTeX 预览、可编辑 LaTeX、一键复制、最近 8 条历史（点击即复制）
+- 二维码配对：不用记 IP，扫码即用
+- 双引擎：高精度（VLM，GPU）/ 极速（CoMER，CPU）
 - 全离线：KaTeX、模型、前端资源都在本地
+- 画布自适应：主机和 pad 都按逻辑画布 1000×600 等比缩放，两端一致
+
+## 实测（CROHME 2019）
+
+| 引擎 | ≤5 符号（209 张） | 400 张全长度 | p50 |
+| --- | --- | --- | --- |
+| **Uni-MuMER 2B Q4** | **81.3%**（≤1 改 93.3%） | **72.3%**（≤1 改 86.0%） | **61 / 120 ms** |
+| CoMER INT8 | 73.7%（≤1 改 91.4%） | 58.0% | 224 / 537 ms |
+
+端到端（平板笔画 → 主机显示结果）实测约 **200–260 ms**（含 WebSocket 往返与渲染）。
 
 ## 架构
 
 ```
-浏览器画布 ──strokes JSON──▶ FastAPI ─┬─▶ Uni-MuMER 2B (llama.cpp / Vulkan, GPU)
-                                      │        └─ 渲染 PNG → /v1/chat/completions
-                                      └─▶ CoMER INT8 (ONNX, CPU, 兜底)
-                                                │
-                           LaTeX 修复/归一化 ◀──┘
-                                      │
-                          浏览器 KaTeX 预览 ◀── JSON
+平板浏览器 ──WS(stroke/preview/recognize)──▶ FastAPI ──┬─▶ Uni-MuMER 2B (llama.cpp/Vulkan, GPU)
+   ▲                                                  └─▶ CoMER INT8 (ONNX, CPU)
+   │  WS(result/state)                                     │
+   └────────────────────────────── PC 浏览器 ◀──WS(result)──┘
 ```
 
 | 目录 | 说明 |
 | --- | --- |
-| `backend/app/main.py` | FastAPI、引擎路由、静态站点 |
-| `backend/app/engines/vlm.py` | llama-server 管理 + OpenAI 兼容调用 |
-| `backend/app/engines/comer.py` | ONNX 会话、贪心/beam 解码、计时 |
-| `backend/app/image_ops.py` | 笔画渲染（CoMER / VLM 两套预处理） |
-| `backend/app/latex_utils.py` | 括号/参数修复、归一化 |
-| `web/` | 单页前端（原生 JS + KaTeX） |
-| `models/comer/` | 7.2 MB ONNX |
-| `models/vlm/` | 1.5 GB GGUF（模型 + 视觉投影） |
+| `backend/app/main.py` | HTTP + WebSocket + 二维码 + 静态站点 |
+| `backend/app/session.py` | 双端共享画布状态与广播 |
+| `backend/app/engines/vlm.py` | llama-server 管理 + 调用 |
+| `backend/app/engines/comer.py` | ONNX 会话、解码、计时 |
+| `web/index.html` + `host.js` | PC 主机端 |
+| `web/pad.html` + `pad.js` | 平板书写端 |
+| `models/` | CoMER 7.2 MB；VLM 1.5 GB |
 | `tools/llama/` | llama.cpp Windows Vulkan 运行时 |
-| `scripts/` | 模型下载、CROHME 评测 |
+| `scripts/` | 模型下载、CROHME 评测、WS 冒烟测试 |
 | `docs/` | 调研、方案、输入方案 |
 
 ## 引擎说明
 
-**高精度（默认）：Uni-MuMER 2B**
-- 基座 Qwen3-VL-2B，NeurIPS 2025 Uni-MuMER 微调，Apache-2.0
-- GGUF Q4_K_M + mmproj Q8，llama.cpp Vulkan 后端，4060/4070 级别即可
-- 同机实测比 CoMER 更快（GPU）且更准
-
-**极速（兜底）：CoMER INT8**
-- 7.2 MB，CPU 可跑，无需 GPU
-- 113 token 词表：四则、分式、根号、上下标、`\int \sum \lim`、常用希腊字母
-- 不支持矩阵、`\partial`、多行、中文
+**高精度（默认）：Uni-MuMER 2B** — Qwen3-VL-2B + Uni-MuMER 微调，GGUF Q4，Apache-2.0。
+**极速（兜底）：CoMER INT8** — 7.2 MB，CPU 可跑；113 token 词表，不支持矩阵/偏导/多行。
 
 ## 能力边界
 
-- 单行公式；复杂矩阵/多行仍建议拆开写
+- 单行公式；矩阵/多行建议拆开写
 - 符号级歧义（`a/α`、`8/g`、大小写）仍会出现，靠编辑框修正
-- VLM 输出不受 113 词表限制，但训练分布仍以 CROHME 风格为主
+- 局域网内无鉴权：同一网络的人都能访问，不要暴露到公网
 
 ## 文档
 
@@ -98,7 +90,7 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 ## 许可与致谢
 
 - Uni-MuMER：Apache-2.0；基座 Qwen3-VL-2B（Apache-2.0）
-- CoMER：ECCV 2022，代码仓库未声明许可；ONNX 权重由 [ink-on](https://github.com/kimseungdae/ink-on)（Apache-2.0）打包
+- CoMER：ECCV 2022；ONNX 权重由 [ink-on](https://github.com/kimseungdae/ink-on)（Apache-2.0）打包
 - llama.cpp：MIT
 - CROHME 数据：仅限研究，禁止商用
 - KaTeX：MIT
