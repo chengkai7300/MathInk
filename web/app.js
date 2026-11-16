@@ -14,6 +14,7 @@
   const confidenceEl = document.getElementById("confidence");
   const recognizeBtn = document.getElementById("recognize");
   const autoBox = document.getElementById("auto");
+  const modeButtons = Array.from(document.querySelectorAll(".seg-btn"));
 
   const INK = "#1f2430";
   const WIDTH = 3;
@@ -23,6 +24,7 @@
   let drawing = false;
   let busy = false;
   let autoTimer = null;
+  let mode = "vlm";
   let W = 0;
   let H = 0;
   let dpr = 1;
@@ -196,6 +198,15 @@
     if (!autoBox.checked) cancelAuto();
   });
 
+  modeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (busy) return;
+      mode = btn.dataset.mode;
+      modeButtons.forEach((b) => b.classList.toggle("active", b === btn));
+      cancelAuto();
+    });
+  });
+
   document.getElementById("copy").addEventListener("click", async () => {
     const text = latexBox.value.trim();
     if (!text) return;
@@ -269,6 +280,7 @@
     const payload = {
       strokes: strokes.map((s) => ({ points: s.points, width: s.width })),
       beam: 1,
+      engine: mode,
     };
     const t0 = performance.now();
     try {
@@ -298,15 +310,23 @@
       }
 
       const t = data.timings || {};
-      timingsEl.textContent = `编码 ${t.encode_ms ?? "?"} ms · 解码 ${
-        t.decode_ms ?? "?"
-      } ms · 服务端 ${t.server_total_ms ?? "?"} ms · 往返 ${wall} ms`;
+      if (data.engine === "vlm") {
+        timingsEl.textContent = `渲染 ${t.render_ms ?? "?"} ms · VLM ${
+          t.vlm_ms ?? "?"
+        } ms · 往返 ${wall} ms`;
+      } else {
+        timingsEl.textContent = `编码 ${t.encode_ms ?? "?"} ms · 解码 ${
+          t.decode_ms ?? "?"
+        } ms · 服务端 ${t.server_total_ms ?? "?"} ms · 往返 ${wall} ms`;
+      }
 
       latencyBadge.textContent = `${wall} ms`;
       latencyBadge.className =
         "badge " + (wall < 1000 ? "badge-ok" : "badge-warn");
 
-      if (!data.latex) {
+      if (data.fallback) {
+        flash("快速模型把握不大，已自动改用高精度模型", "ok");
+      } else if (!data.latex) {
         flash("没有识别出内容，写得再清楚一点", "err");
       } else if (!data.valid) {
         flash("结果可能不完整，请检查", "warn");
@@ -370,6 +390,25 @@
         ""
       )}`;
       engineBadge.className = "badge badge-ok";
+
+      const vlmBtn = modeButtons.find((b) => b.dataset.mode === "vlm");
+      if (vlmBtn) {
+        if (h.vlm && h.vlm.available) {
+          vlmBtn.disabled = false;
+          vlmBtn.title = h.vlm.ready
+            ? "Uni-MuMER 2B 已加载，约 60–260 ms"
+            : "Uni-MuMER 2B 正在加载，首次识别会慢一些";
+        } else {
+          vlmBtn.disabled = true;
+          vlmBtn.title = "未安装 VLM 模型（models/vlm）";
+          if (mode === "vlm") {
+            mode = "comer";
+            modeButtons.forEach((b) =>
+              b.classList.toggle("active", b.dataset.mode === "comer")
+            );
+          }
+        }
+      }
     })
     .catch(() => {
       engineBadge.textContent = "本地服务未连接";

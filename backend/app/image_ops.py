@@ -189,3 +189,69 @@ def image_to_input(img: Image.Image) -> tuple[np.ndarray, np.ndarray]:
     padded = Image.new("L", (g.width + PAD * 2, g.height + PAD * 2), 0)
     padded.paste(g, (PAD, PAD))
     return to_model_input(padded)
+
+
+def strokes_to_vlm_image(
+    strokes: Sequence[Stroke],
+    max_side: int = 512,
+    pad: int = 24,
+    line_width: float = 4.0,
+    target_height: int = 160,
+) -> Image.Image:
+    """Render a natural black-on-white formula image for a vision-language model.
+
+    Small writing is scaled up to ~target_height so the model sees CROHME-like
+    proportions; large writing is capped at max_side.
+    """
+    min_x, min_y, max_x, max_y = _bbox(strokes)
+    raw_w = max(1, math.ceil(max_x - min_x))
+    raw_h = max(1, math.ceil(max_y - min_y))
+    ss = 2
+    w = (raw_w + pad * 2) * ss
+    h = (raw_h + pad * 2) * ss
+    img = Image.new("L", (w, h), 255)
+    draw = ImageDraw.Draw(img)
+    ox = (pad - min_x) * ss
+    oy = (pad - min_y) * ss
+
+    for stroke in strokes:
+        if not stroke.points:
+            continue
+        pts = resample_points(stroke.points)
+        width = max(2.0, line_width) * ss
+        r = width / 2.0
+        if len(pts) == 1:
+            px, py = pts[0].x * ss + ox, pts[0].y * ss + oy
+            draw.ellipse([px - r, py - r, px + r, py + r], fill=0)
+            continue
+        if len(pts) == 2:
+            poly = [Point(p.x * ss + ox, p.y * ss + oy) for p in pts]
+        else:
+            poly = [Point(pts[0].x * ss + ox, pts[0].y * ss + oy)]
+            for i in range(1, len(pts) - 1):
+                p0, c = pts[i - 1], pts[i]
+                p1 = Point((pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2)
+                steps = max(3, int(math.hypot(c.x - p0.x, c.y - p0.y) / 2) + 1)
+                for q in _quadratic(p0, c, p1, steps):
+                    poly.append(Point(q.x * ss + ox, q.y * ss + oy))
+            last = pts[-1]
+            poly.append(Point(last.x * ss + ox, last.y * ss + oy))
+        draw.line([(p.x, p.y) for p in poly], fill=0, width=max(1, round(width)), joint="curve")
+        for p in (poly[0], poly[-1]):
+            draw.ellipse([p.x - r, p.y - r, p.x + r, p.y + r], fill=0)
+
+    img = img.resize((raw_w + pad * 2, raw_h + pad * 2), Image.LANCZOS)
+
+    # scale to a friendly size
+    scale = 1.0
+    if img.height < target_height:
+        scale = target_height / max(1, img.height)
+        scale = min(scale, max_side / max(img.width, img.height))
+    if max(img.width, img.height) * scale > max_side:
+        scale = max_side / max(img.width, img.height)
+    if scale != 1.0:
+        img = img.resize(
+            (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+            Image.LANCZOS,
+        )
+    return img.convert("RGB")

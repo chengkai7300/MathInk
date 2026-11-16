@@ -12,8 +12,13 @@ if (-not (Test-Path $py)) {
 }
 
 if (-not (Test-Path "models\comer\encoder_int8.onnx")) {
-    Write-Host "下载模型 ..."
+    Write-Host "下载 CoMER 模型 ..."
     & $py scripts\download_models.py --engine comer
+}
+
+if (-not (Test-Path "models\vlm\model-q4km.gguf")) {
+    Write-Host "提示：未安装高精度模型（Uni-MuMER 2B），将只使用 CoMER。"
+    Write-Host "      安装： .\.venv\Scripts\python scripts\download_models.py --engine vlm --llama"
 }
 
 $port = if ($env:MATHINK_PORT) { $env:MATHINK_PORT } else { "8848" }

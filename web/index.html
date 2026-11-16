@@ -31,6 +31,10 @@
           <button id="demo" class="btn btn-ghost" title="载入示例">示例</button>
         </div>
         <div class="tools right">
+          <div class="seg" id="mode" role="group" aria-label="识别模式">
+            <button class="seg-btn" data-mode="comer" title="CoMER，CPU，约 0.1–0.4 s">极速</button>
+            <button class="seg-btn active" data-mode="vlm" title="Uni-MuMER 2B，GPU，约 60–260 ms">高精度</button>
+          </div>
           <label class="switch" title="停笔后自动识别">
             <input type="checkbox" id="auto" checked />
             <span>自动识别</span>

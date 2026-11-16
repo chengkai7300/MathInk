@@ -25,8 +25,37 @@ MODELS = {
         },
         "size_mb": 7.2,
         "license": "Apache-2.0 (packaged by ink-on; CoMER weights from CROHME)",
-    }
+    },
+    "vlm": {
+        "dir": ROOT / "models" / "vlm",
+        "files": {
+            "model-q4km.gguf": "https://hf-mirror.com/mradermacher/Uni-MuMER-Qwen3-VL-2B-GGUF/resolve/main/Uni-MuMER-Qwen3-VL-2B.Q4_K_M.gguf",
+            "mmproj-q8.gguf": "https://hf-mirror.com/mradermacher/Uni-MuMER-Qwen3-VL-2B-GGUF/resolve/main/Uni-MuMER-Qwen3-VL-2B.mmproj-Q8_0.gguf",
+        },
+        "size_mb": 1550,
+        "license": "Apache-2.0 (Uni-MuMER, Qwen3-VL base)",
+    },
 }
+
+LLAMA_URL = "https://github.com/ggml-org/llama.cpp/releases/download/b12359/llama-b12359-bin-win-vulkan-x64.zip"
+LLAMA_DIR = ROOT / "tools" / "llama"
+
+
+def setup_llama(force: bool = False) -> None:
+    if (LLAMA_DIR / "llama-server.exe").exists() and not force:
+        print(f"llama.cpp: exists ({LLAMA_DIR})")
+        return
+    import tempfile
+    import zipfile
+
+    tmp = Path(tempfile.gettempdir()) / "llama-vulkan.zip"
+    print(f"llama.cpp: downloading {LLAMA_URL}")
+    download(LLAMA_URL, tmp)
+    LLAMA_DIR.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(tmp) as zf:
+        zf.extractall(LLAMA_DIR)
+    tmp.unlink(missing_ok=True)
+    print(f"llama.cpp: extracted to {LLAMA_DIR}")
 
 
 def sha256(path: Path) -> str:
@@ -58,12 +87,17 @@ def main() -> None:
     ap.add_argument("--engine", choices=sorted(MODELS), default="comer")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--llama", action="store_true", help="also download llama.cpp runtime")
     args = ap.parse_args()
 
     if args.list:
         for name, spec in MODELS.items():
             print(f"{name:10s} {spec['size_mb']:>6} MB  {spec['license']}")
+        print(f"{'llama.cpp':10s} {38:>6} MB  MIT (binaries)")
         return
+
+    if args.llama:
+        setup_llama(args.force)
 
     spec = MODELS[args.engine]
     print(f"engine: {args.engine} -> {spec['dir']}")
