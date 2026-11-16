@@ -12,7 +12,11 @@
 ## 使用方式
 
 ```powershell
-# 首次：装依赖、下模型（CoMER 必装；VLM 可选但推荐）
+# 首次：创建虚拟环境、装依赖
+python -m venv .venv
+.\.venv\Scripts\pip install -r backend\requirements.txt
+
+# 下模型（CoMER 必装；VLM 可选但推荐，约 1.5 GB）
 .\.venv\Scripts\python scripts\download_models.py --engine comer
 .\.venv\Scripts\python scripts\download_models.py --engine vlm --llama
 
