@@ -385,10 +385,10 @@
     .then((r) => r.json())
     .then((h) => {
       const prov = (h.providers || []).join(", ") || "CPU";
-      engineBadge.textContent = `${h.engine || "engine"} · ${prov.replace(
-        "ExecutionProvider",
-        ""
-      )}`;
+      const vlmReady = Boolean(h.vlm && h.vlm.ready);
+      engineBadge.textContent = vlmReady
+        ? "VLM · GPU"
+        : `${h.engine || "engine"} · ${prov.replace("ExecutionProvider", "")}`;
       engineBadge.className = "badge badge-ok";
 
       const vlmBtn = modeButtons.find((b) => b.dataset.mode === "vlm");
