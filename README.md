@@ -1,6 +1,5 @@
 # MathInk
 
-[![CI](https://github.com/chengkai7300/MathInk/actions/workflows/ci.yml/badge.svg)](https://github.com/chengkai7300/MathInk/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/chengkai7300/MathInk?include_prereleases&sort=semver)](https://github.com/chengkai7300/MathInk/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
