@@ -43,6 +43,23 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 > `netsh advfirewall firewall add rule name="MathInk 8848" dir=in action=allow protocol=TCP localport=8848`。
 > 若主机页面显示的 IP 不对（VPN/虚拟网卡），启动前设 `MATHINK_LAN_IP=192.168.x.x`。
 
+### 启动与停止
+
+```powershell
+# 启动（前台运行，日志直接打印）
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+
+# 停止方式一：在启动窗口按 Ctrl+C（会同时停掉 llama-server）
+
+# 停止方式二：另开一个窗口
+powershell -ExecutionPolicy Bypass -File .\stop.ps1
+```
+
+`stop.ps1` 会停掉监听 8848 的进程和本项目启动的 `llama-server`。
+如果窗口被直接关闭，也可以用同样的 `stop.ps1` 清理残留进程。
+
+自定义端口：启动前设 `$env:MATHINK_PORT = "9000"`，停止时也设同一个值。
+
 ## 功能
 
 - **双端实时同步**：平板笔画经 WebSocket 推到主机，主机实时镜像书写过程
