@@ -1,23 +1,27 @@
 # MathInk stop script (Windows PowerShell 5.1+)
-# Stops the uvicorn server for this project and its llama-server child.
+# Gracefully stops the tray app, the server and llama-server.
 # Usage: powershell -ExecutionPolicy Bypass -File .\stop.ps1
 $port = if ($env:MATHINK_PORT) { $env:MATHINK_PORT } else { "8848" }
 $root = $PSScriptRoot
+$py = ".\.venv\Scripts\python.exe"
 $stopped = 0
 
-# 1) kill the process listening on the MathInk port
+# 1) preferred: ask the launcher to stop its whole tree
+if (Test-Path $py) {
+    & $py launcher.py --stop 2>$null
+}
+
+# 2) kill anything still listening on the MathInk port
 $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
 foreach ($c in $listeners) {
     try {
         Stop-Process -Id $c.OwningProcess -Force -ErrorAction Stop
         Write-Host "Stopped listener on port $port (PID $($c.OwningProcess))"
         $stopped++
-    } catch {
-        Write-Host "Could not stop PID $($c.OwningProcess): $($_.Exception.Message)"
-    }
+    } catch {}
 }
 
-# 2) kill leftover uvicorn/app.main processes for this project
+# 3) kill leftover uvicorn/app.main processes for this project
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like "*uvicorn*app.main:app*" } |
     ForEach-Object {
@@ -28,7 +32,7 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyC
         } catch {}
     }
 
-# 3) kill the llama-server started by MathInk (matched by model path)
+# 4) kill the llama-server started by MathInk (matched by model path)
 Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -like "*$root\models\vlm*" -or $_.CommandLine -like "*models\vlm\model-q4km.gguf*" } |
     ForEach-Object {
@@ -42,5 +46,5 @@ Get-CimInstance Win32_Process -Filter "Name='llama-server.exe'" -ErrorAction Sil
 if ($stopped -eq 0) {
     Write-Host "MathInk is not running (port $port is free)."
 } else {
-    Write-Host "MathInk stopped."
+    Write-Host "MathInk stopped; VRAM should be released."
 }

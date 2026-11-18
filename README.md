@@ -12,7 +12,7 @@
 | --- | --- |
 | ![主机端](docs/assets/host.png) | ![平板端](docs/assets/pad.png) |
 
-> 状态：**v0.1.1-test**（2026-11-16）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
+> 状态：**v0.1.2-test**（2026-11-18）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
 > 非商用项目；CROHME 数据与权重仅限研究/自用。变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使用方式
@@ -46,19 +46,39 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 ### 启动与停止
 
 ```powershell
-# 启动（前台运行，日志直接打印）
+# 启动：后台运行，通知区域出现 MathInk 图标
 powershell -ExecutionPolicy Bypass -File .\start.ps1
 
-# 停止方式一：在启动窗口按 Ctrl+C（会同时停掉 llama-server）
+# 调试：前台运行，日志直接打印（Ctrl+C 退出）
+powershell -ExecutionPolicy Bypass -File .\start.ps1 -Console
 
-# 停止方式二：另开一个窗口
+# 停止（任选其一）
+#  1) 右键通知区域图标 → 「退出 MathInk（彻底关闭）」
+#  2) 命令行
 powershell -ExecutionPolicy Bypass -File .\stop.ps1
 ```
 
-`stop.ps1` 会停掉监听 8848 的进程和本项目启动的 `llama-server`。
-如果窗口被直接关闭，也可以用同样的 `stop.ps1` 清理残留进程。
+托盘图标（可能在 `^` 展开区，可拖到任务栏常驻）菜单：
+
+| 菜单项 | 作用 |
+| --- | --- |
+| 打开主机端 / 双击图标 | 打开 <http://127.0.0.1:8848> |
+| 复制平板地址 | 把 `http://<LAN-IP>:8848/pad` 复制到剪贴板 |
+| 状态 | 显示运行状态与端口 |
+| 释放显存 | 停掉 VLM 子进程，立即释放约 1.9 GB 显存；下次识别自动重载 |
+| 打开日志 | 打开 `logs/launcher.log` |
+| 退出 MathInk（彻底关闭） | 停服务、停 llama-server、移除图标 |
+
+**显存与内存行为**
+
+- VLM 在第一次识别时才加载，约 **1.9 GB 显存 / 1.6 GB 内存**；CoMER 仅占几十 MB
+- 退出（托盘或 `stop.ps1`）会停掉 `llama-server`，显存回到桌面基线
+- llama-server 被放进 Windows **Job Object**：即使主程序被强杀/崩溃，显存也会被回收
+- 下次启动会自动清理上次遗留的 `llama-server`
+- 只用 CPU 引擎：启动前 `$env:MATHINK_VLM = "0"`
 
 自定义端口：启动前设 `$env:MATHINK_PORT = "9000"`，停止时也设同一个值。
+日志：`logs/launcher.log`、`logs/llama-server.log`。
 
 ## 功能
 

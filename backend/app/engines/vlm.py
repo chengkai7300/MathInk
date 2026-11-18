@@ -7,6 +7,7 @@ a GGUF pair (language model + mmproj vision projector). Everything stays local.
 from __future__ import annotations
 
 import base64
+import ctypes
 import io
 import json
 import logging
@@ -26,6 +27,106 @@ LOG = logging.getLogger("mathink.vlm")
 
 PROMPT = "Please write the LaTeX code of the formula in the image."
 SYSTEM = "You are a helpful assistant."
+
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _assign_kill_on_close_job(pid: int):
+    """Put the child in a Windows job so it dies if this process dies.
+
+    Returns the job handle (must stay open) or None on failure. This is what
+    prevents an orphaned llama-server from keeping VRAM after a crash or a
+    forced window close.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.POINTER(ctypes.c_ulong)),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            job, 9, ctypes.byref(info), ctypes.sizeof(info)
+        ):
+            kernel32.CloseHandle(job)
+            return None
+        handle = kernel32.OpenProcess(0x0100 | 0x0001, False, pid)  # SET_QUOTA|TERMINATE
+        if not handle:
+            kernel32.CloseHandle(job)
+            return None
+        ok = kernel32.AssignProcessToJobObject(job, handle)
+        kernel32.CloseHandle(handle)
+        if not ok:
+            kernel32.CloseHandle(job)
+            return None
+        return job
+    except Exception:
+        LOG.debug("could not assign job object", exc_info=True)
+        return None
+
+
+def _taskkill(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F", "/T"],
+            capture_output=True,
+            creationflags=CREATE_NO_WINDOW,
+        )
+
+
+def _is_llama_pid(pid: int) -> bool:
+    """Check that a PID still belongs to llama-server.exe (avoid PID reuse)."""
+    if os.name != "nt" or pid <= 0:
+        return False
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_uint32(1024)
+        ok = kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and buf.value.lower().endswith("llama-server.exe")
+    except Exception:
+        return False
+
 
 
 def clean_latex(text: str) -> str:
@@ -83,6 +184,9 @@ class LlamaServer:
         self.proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._last_start = 0.0
+        self._job = None
+        base = log_path.parent if log_path else Path(".")
+        self.pid_path = base / "llama-server.pid"
 
     @property
     def base_url(self) -> str:
@@ -127,13 +231,13 @@ class LlamaServer:
                     "-ngl",
                     "99",
                     "-c",
-                    "4096",
+                    "2048",
+                    "--parallel",
+                    "1",
                     "--host",
                     "127.0.0.1",
                     "--port",
                     str(self.port),
-                    "-np",
-                    "1",
                     "--jinja",
                     "--no-warmup",
                 ]
@@ -143,9 +247,17 @@ class LlamaServer:
                     cwd=str(self.exe.parent),
                     stdout=log,
                     stderr=subprocess.STDOUT,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    creationflags=CREATE_NO_WINDOW,
                 )
                 self._last_start = time.time()
+                try:
+                    self.pid_path.parent.mkdir(parents=True, exist_ok=True)
+                    self.pid_path.write_text(str(self.proc.pid), encoding="utf-8")
+                except OSError:
+                    pass
+                self._job = _assign_kill_on_close_job(self.proc.pid)
+                if self._job is None:
+                    LOG.warning("job object unavailable; relying on explicit shutdown")
 
             deadline = time.time() + timeout
             while time.time() < deadline:
@@ -159,13 +271,45 @@ class LlamaServer:
             LOG.error("llama-server did not become healthy within %.0fs", timeout)
             return False
 
-    def stop(self) -> None:
-        if self.proc is not None and self.proc.poll() is None:
-            self.proc.terminate()
+    def _close_job(self) -> None:
+        if self._job is not None:
             try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
+                ctypes.WinDLL("kernel32").CloseHandle(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def _remove_pid(self) -> None:
+        try:
+            self.pid_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def stop(self) -> None:
+        """Stop llama-server and make sure it is really gone (frees VRAM)."""
+        proc = self.proc
+        self.proc = None
+        pid = proc.pid if proc is not None else None
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        if pid and _is_llama_pid(pid):
+            LOG.warning("llama-server %s still alive; taskkill", pid)
+            _taskkill(pid)
+        if pid is None:
+            try:
+                stale = int(self.pid_path.read_text(encoding="utf-8").strip())
+            except Exception:
+                stale = None
+            if stale and _is_llama_pid(stale):
+                LOG.warning("killing stale llama-server %s", stale)
+                _taskkill(stale)
+        self._close_job()
+        self._remove_pid()
+        self._last_start = 0.0
 
 
 class VlmEngine:

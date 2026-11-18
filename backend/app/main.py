@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
     engine = None
 
 
-app = FastAPI(title="MathInk", version="0.1.1-test", lifespan=lifespan)
+app = FastAPI(title="MathInk", version="0.1.2-test", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

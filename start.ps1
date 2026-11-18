@@ -1,5 +1,8 @@
 # MathInk launcher (Windows PowerShell 5.1+)
+# Starts the tray app; it runs the server in the background and owns llama-server.
 # Usage: powershell -ExecutionPolicy Bypass -File .\start.ps1
+#        powershell -ExecutionPolicy Bypass -File .\start.ps1 -Console
+param([switch]$Console)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -22,8 +25,44 @@ if (-not (Test-Path "models\vlm\model-q4km.gguf")) {
 }
 
 $port = if ($env:MATHINK_PORT) { $env:MATHINK_PORT } else { "8848" }
-Write-Host "MathInk host:  http://127.0.0.1:$port"
-Write-Host "Tablet pad:    http://<LAN-IP>:$port/pad  (the host page shows a QR code)"
-Write-Host "Press Ctrl+C to stop."
-$env:PYTHONPATH = "backend"
-& $py -m uvicorn app.main:app --host 0.0.0.0 --port $port
+$hostUrl = "http://127.0.0.1:$port"
+
+function Test-Running {
+    try {
+        $r = Invoke-RestMethod "$hostUrl/api/health" -TimeoutSec 2
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+if (Test-Running) {
+    Write-Host "MathInk is already running: $hostUrl"
+    Start-Process $hostUrl
+    exit 0
+}
+
+if ($Console) {
+    Write-Host "MathInk (console mode): $hostUrl"
+    Write-Host "Press Ctrl+C to stop."
+    $env:PYTHONPATH = "backend"
+    & $py launcher.py
+    exit $LASTEXITCODE
+}
+
+$pythonw = ".\.venv\Scripts\pythonw.exe"
+if (-not (Test-Path $pythonw)) { $pythonw = $py }
+Start-Process -FilePath $pythonw -ArgumentList "launcher.py" -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+
+for ($i = 0; $i -lt 60; $i++) {
+    Start-Sleep -Milliseconds 500
+    if (Test-Running) {
+        Write-Host "MathInk is running: $hostUrl"
+        Write-Host "Look for the MathInk icon in the notification area (system tray)."
+        Write-Host "Right-click it to open the UI, copy the tablet URL, release VRAM, or quit."
+        exit 0
+    }
+}
+
+Write-Host "MathInk did not become ready. Check logs\launcher.log."
+exit 1

@@ -1,3 +1,3 @@
 """MathInk backend package."""
 
-__version__ = "0.1.1-test"
+__version__ = "0.1.2-test"

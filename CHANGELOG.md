@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.2-test — 2026-11-18
+
+### Fixed
+
+- **退出后 `llama-server` 残留、显存不释放**：根因是子进程只依赖 FastAPI 的 lifespan 收尾，
+  关闭窗口/强杀主程序时不会执行，于是 llama-server 成为孤儿并持续占用约 1.9 GB 显存
+- 启动时自动清理上次遗留的 `llama-server`（按命令行匹配本项目模型路径）
+- `stop` 现在同时清理 launcher、uvicorn、llama-server，并校验 PID 确实是 `llama-server.exe`
+
+### Added
+
+- **系统托盘图标**（pystray）：打开主机端、复制平板地址、查看状态、释放显存、打开日志、彻底退出
+- **后台启动**：`start.ps1` 拉起托盘程序后立即返回；`-Console` 可前台调试
+- **Windows Job Object（KILL_ON_JOB_CLOSE）**：主程序被强杀/崩溃时，llama-server 也会被回收
+- 单实例互斥锁，重复执行 `start.ps1` 只会打开已有页面
+- CLI：`python launcher.py --stop` / `--selftest-quit`
+
+### Changed
+
+- llama-server 上下文 4096 → **2048**，并行槽位 → **1**，降低 KV 缓存占用
+- `stop.ps1` 优先调用 launcher 的停止逻辑，再兜底清理端口和进程
+
 ## v0.1.1-test — 2026-11-16
 
 ### Fixed
