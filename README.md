@@ -12,10 +12,25 @@
 | --- | --- |
 | ![主机端](docs/assets/host.png) | ![平板端](docs/assets/pad.png) |
 
-> 状态：**v0.1.2-test**（2026-11-18）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
+> 状态：**v0.1.3-test**（2026-11-18）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
 > 非商用项目；CROHME 数据与权重仅限研究/自用。变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使用方式
+
+### 方式一：`MathInk.exe`（推荐）
+
+1. 从 [Releases](https://github.com/chengkai7300/MathInk/releases) 下载 `MathInk.exe`，放到项目目录
+   （与 `models/`、`tools/` 同级）——直接放在仓库根目录即可
+2. 双击启动，通知区域出现 MathInk 图标
+3. 打开 <http://127.0.0.1:8848>（托盘双击图标也可以）
+
+exe 内置 Web 服务和 CoMER，**单独放到任何文件夹都能用 CPU 模式**；
+要高精度 VLM，需要 exe 旁边有 `models/vlm/` 和 `tools/llama/`。
+停止：托盘右键「退出」或 `MathInk.exe --stop`。
+
+> 首次运行 Windows 可能提示"未知发布者"（未签名），选「更多信息 → 仍要运行」。
+
+### 方式二：源码运行
 
 ```powershell
 # 0) 克隆（或直接下载源码包）
@@ -85,7 +100,7 @@ powershell -ExecutionPolicy Bypass -File .\stop.ps1
 - **双端实时同步**：平板笔画经 WebSocket 推到主机，主机实时镜像书写过程
 - **两种输入方式**：平板触控笔，或直接在 PC 主机画布上用鼠标 / 触屏写，共用同一画布
 - 平板端：触控笔压感变宽、手掌防误触、撤销/清空/识别、自动识别、全屏
-- 主机端：可直接书写、KaTeX 预览、可编辑 LaTeX、一键复制、最近 8 条历史（点击即复制）
+- 主机端：可直接书写、**停笔自动识别（可关）**、KaTeX 预览、可编辑 LaTeX、一键复制、最近 8 条历史
 - 二维码配对：不用记 IP，扫码即用
 - 双引擎：高精度（VLM，GPU）/ 极速（CoMER，CPU）
 - 全离线：KaTeX、模型、前端资源都在本地
@@ -153,6 +168,9 @@ powershell -ExecutionPolicy Bypass -File .\stop.ps1
 .\.venv\Scripts\python scripts\fetch_crohme.py
 .\.venv\Scripts\python scripts\eval_crohme.py --gt-max-len 5 --limit 300 --variants official
 .\.venv\Scripts\python scripts\eval_vlm.py --gt-max-len 5 --limit 0
+
+# 构建单文件 exe（输出 dist\MathInk.exe）
+powershell -ExecutionPolicy Bypass -File .\build_exe.ps1 -Clean
 ```
 
 评测结果写入 `_research/`（已 gitignore），不会进入仓库。

@@ -19,7 +19,13 @@ import time
 import webbrowser
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("MATHINK_ROOT", "")).resolve() if os.environ.get("MATHINK_ROOT") else None
+if ROOT is None:
+    if getattr(sys, "frozen", False):
+        ROOT = Path(sys.executable).resolve().parent
+    else:
+        ROOT = Path(__file__).resolve().parent
+os.environ.setdefault("MATHINK_ROOT", str(ROOT))
 LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "launcher.log"

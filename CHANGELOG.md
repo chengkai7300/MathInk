@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.3-test — 2026-11-18
+
+### Added
+
+- **单文件 `MathInk.exe`**：双击启动，内置托盘图标、Web 服务与 CoMER 模型（约 58 MB）
+  - 可执行文件在项目根目录时，自动使用旁边的 `models/vlm` 和 `tools/llama`（高精度模式）
+  - 单独拷走 exe 也能用 CoMER（CPU），VLM 不可用时自动隐藏/降级
+  - `MathInk.exe --stop` 可命令行彻底关闭
+- **PC 主机端自动识别**：在主机画布上停笔约 0.9 秒自动识别，工具栏可关闭「自动」
+- `build_exe.ps1` + `MathInk.spec` + 图标生成脚本，可复现构建
+
+### Fixed
+
+- 主机端此前只发送笔画，必须手动点「重新识别」；现在与平板端行为一致
+
 ## v0.1.2-test — 2026-11-18
 
 ### Fixed

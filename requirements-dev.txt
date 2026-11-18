@@ -2,3 +2,4 @@
 numpy>=1.26
 pillow>=10.0
 websockets>=12
+pyinstaller>=6.0

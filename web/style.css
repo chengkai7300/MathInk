@@ -164,6 +164,17 @@ body {
 }
 .seg-btn:disabled { opacity: .45; cursor: not-allowed; }
 
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  user-select: none;
+  cursor: pointer;
+}
+.switch input { accent-color: var(--accent); }
+
 .canvas-wrap {
   position: relative;
   flex: 1 1 auto;

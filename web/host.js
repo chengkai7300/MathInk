@@ -21,6 +21,7 @@
   const copyBtn = document.getElementById("copy");
   const recognizeBtn = document.getElementById("recognize");
   const clearBtn = document.getElementById("clear");
+  const autoBox = document.getElementById("auto");
   const historyBox = document.getElementById("history");
   const modeButtons = Array.from(document.querySelectorAll(".seg-btn"));
 
@@ -34,6 +35,8 @@
   let history = [];
   let W = 0, H = 0, dpr = 1;
   let previewTimer = 0;
+  let autoTimer = null;
+  let pending = false;
 
   function toLogical(e) {
     const r = canvas.getBoundingClientRect();
@@ -130,7 +133,7 @@
     strokeInfo.textContent = `${strokes.length} 笔`;
     canvasInfo.textContent = `逻辑画布 ${Math.round(LW)} × ${Math.round(LH)}`;
     hint.classList.toggle("hidden", strokes.length > 0 || drawing);
-    recognizeBtn.disabled = strokes.length === 0;
+    recognizeBtn.disabled = strokes.length === 0 || pending;
     clearBtn.disabled = strokes.length === 0;
   }
 
@@ -233,13 +236,36 @@
     latexBox._t = setTimeout(() => renderLatex(latexBox.value.trim()), 200);
   });
 
-  recognizeBtn.addEventListener("click", () => {
+  function cancelAuto() {
+    if (autoTimer) {
+      clearTimeout(autoTimer);
+      autoTimer = null;
+    }
+  }
+
+  function scheduleAuto() {
+    cancelAuto();
+    if (!autoBox.checked || pending || !strokes.length) return;
+    autoTimer = setTimeout(() => {
+      autoTimer = null;
+      recognize();
+    }, 900);
+  }
+
+  function recognize() {
+    cancelAuto();
+    if (pending || !strokes.length) return;
     if (!ws || ws.readyState !== WebSocket.OPEN) return flash("未连接", "err");
+    pending = true;
+    updateInfo();
     flash("识别中…");
-    ws.send(JSON.stringify({ type: "recognize", engine: mode }));
-  });
+    send({ type: "recognize", engine: mode, request_id: String(Date.now()) });
+  }
+
+  recognizeBtn.addEventListener("click", recognize);
 
   clearBtn.addEventListener("click", () => {
+    cancelAuto();
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "clear" }));
   });
 
@@ -247,6 +273,7 @@
     btn.addEventListener("click", () => {
       mode = btn.dataset.mode;
       modeButtons.forEach((b) => b.classList.toggle("active", b === btn));
+      cancelAuto();
     });
   });
 
@@ -255,6 +282,7 @@
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    cancelAuto();
     canvas.setPointerCapture(e.pointerId);
     const p = toLogical(e);
     current = { points: [{ x: p.x, y: p.y }], width: e.pointerType === "pen" ? 3.5 : 3.5 };
@@ -287,6 +315,7 @@
     send({ type: "preview", stroke: null });
     updateInfo();
     draw();
+    scheduleAuto();
   }
 
   canvas.addEventListener("pointerup", endHostStroke);
@@ -332,14 +361,19 @@
         preview = msg.stroke;
         draw();
       } else if (msg.type === "result") {
+        pending = false;
+        updateInfo();
         showResult(msg);
       } else if (msg.type === "peers") {
         setPeer((msg.pads || 0) > 0);
       } else if (msg.type === "error") {
+        pending = false;
+        updateInfo();
         flash(msg.message || "识别失败", "err");
       }
     };
     ws.onclose = () => {
+      pending = false;
       setPeer(false);
       engineBadge.textContent = "服务未连接";
       engineBadge.className = "badge badge-err";

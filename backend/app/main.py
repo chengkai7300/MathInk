@@ -5,6 +5,7 @@ import io
 import math
 import os
 import socket
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -30,9 +31,13 @@ from .engines.vlm import LlamaServer, VlmEngine
 from .image_ops import Point, Stroke
 from .session import Session
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("MATHINK_ROOT") or Path(__file__).resolve().parents[2])
 WEB_DIR = ROOT / "web"
+if not WEB_DIR.exists():
+    WEB_DIR = Path(getattr(sys, "_MEIPASS", ROOT)) / "web"
 MODEL_DIR = Path(os.environ.get("MATHINK_MODEL_DIR", ROOT / "models" / "comer"))
+if not MODEL_DIR.exists():
+    MODEL_DIR = Path(getattr(sys, "_MEIPASS", ROOT)) / "models" / "comer"
 VLM_DIR = Path(os.environ.get("MATHINK_VLM_DIR", ROOT / "models" / "vlm"))
 LLAMA_EXE = Path(
     os.environ.get(
@@ -78,7 +83,7 @@ async def lifespan(app: FastAPI):
     engine = None
 
 
-app = FastAPI(title="MathInk", version="0.1.2-test", lifespan=lifespan)
+app = FastAPI(title="MathInk", version="0.1.3-test", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -5,5 +5,8 @@ models/
 tools/
 _research/
 logs/
+build/
+dist/
+MathInk.exe
 *.log
 .DS_Store
