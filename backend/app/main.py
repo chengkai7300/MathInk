@@ -4,6 +4,7 @@ import asyncio
 import io
 import math
 import os
+import re
 import socket
 import sys
 import threading
@@ -29,7 +30,7 @@ from . import latex_utils
 from .engines.comer import ComerEngine
 from .engines.vlm import LlamaServer, VlmEngine
 from .image_ops import Point, Stroke
-from .session import Session
+from .session import SessionManager
 
 ROOT = Path(os.environ.get("MATHINK_ROOT") or Path(__file__).resolve().parents[2])
 WEB_DIR = ROOT / "web"
@@ -51,8 +52,14 @@ PAD_W, PAD_H = 1000.0, 600.0
 engine: ComerEngine | None = None
 vlm: VlmEngine | None = None
 vlm_server: LlamaServer | None = None
-session = Session()
+sessions = SessionManager()
 _lan_ip: str | None = None
+
+ROOM_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+def _room_name(raw) -> str:
+    return raw if isinstance(raw, str) and ROOM_RE.fullmatch(raw) else "main"
 
 
 def _warmup_strokes() -> list[Stroke]:
@@ -83,7 +90,7 @@ async def lifespan(app: FastAPI):
     engine = None
 
 
-app = FastAPI(title="MathInk", version="0.1.3-test", lifespan=lifespan)
+app = FastAPI(title="MathInk", version="0.1.4-test", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -167,26 +174,29 @@ def _recognize_sync(strokes: list[Stroke], engine_name: str):
     return engine.recognize_strokes(strokes)
 
 
-async def _recognize_session(engine_name: str, request_id: str | None = None) -> dict | None:
-    if not session.strokes:
+async def _recognize_session(sess, engine_name: str, request_id: str | None = None) -> dict | None:
+    if not sess.strokes:
         return None
-    strokes = _to_strokes(_dicts_to_strokes(session.strokes))
-    async with session.lock:
+    strokes = _to_strokes(_dicts_to_strokes(sess.strokes))
+    async with sess.lock:
+        rev = sess.rev
         t0 = time.perf_counter()
         rec = await asyncio.to_thread(_recognize_sync, strokes, engine_name)
         total = round((time.perf_counter() - t0) * 1000, 1)
         payload = _vlm_result(rec, total) if rec.engine == "vlm" else _comer_result(rec, total)
     payload["type"] = "result"
     payload["request_id"] = request_id
-    session.last_result = payload
-    await session.broadcast(payload)
+    payload["rev"] = rev
+    payload["room"] = sess.name
+    sess.last_result = payload
+    await sess.broadcast(payload)
     return payload
 
 
 # ---------------------------------------------------------------- websockets
 
 
-def _clean_stroke(raw) -> dict | None:
+def _clean_stroke(raw, cw: float = 1000, ch: float = 600) -> dict | None:
     if not isinstance(raw, dict):
         return None
     points = []
@@ -196,8 +206,8 @@ def _clean_stroke(raw) -> dict | None:
             y = float(p.get("y", 0))
         except (TypeError, ValueError):
             continue
-        x = min(PAD_W, max(0.0, x))
-        y = min(PAD_H, max(0.0, y))
+        x = min(cw, max(0.0, x))
+        y = min(ch, max(0.0, y))
         points.append({"x": round(x, 2), "y": round(y, 2)})
     if not points:
         return None
@@ -218,8 +228,10 @@ def _dicts_to_strokes(items) -> list:
     return out
 
 
-def _apply_viewport(viewport) -> bool:
-    """Match the logical canvas aspect to the input device viewport."""
+def _apply_viewport(sess, viewport) -> bool:
+    """Match the room canvas to the first input device; later pads letterbox."""
+    if sess.canvas_locked:
+        return False
     try:
         vw = float(viewport.get("w", 0))
         vh = float(viewport.get("h", 0))
@@ -234,76 +246,95 @@ def _apply_viewport(viewport) -> bool:
         ch, cw = 900, round(900 * aspect)
     cw = max(400, min(1200, int(cw)))
     ch = max(400, min(1200, int(ch)))
-    return session.set_canvas(cw, ch)
+    changed = sess.set_canvas(cw, ch)
+    sess.canvas_locked = True
+    return changed
 
 
-async def _handle_message(ws: WebSocket, role: str, msg: dict) -> None:
+async def _handle_message(sess, ws: WebSocket, role: str, msg: dict) -> None:
     kind = msg.get("type")
     if kind == "stroke":
-        stroke = _clean_stroke(msg.get("stroke"))
+        stroke = _clean_stroke(msg.get("stroke"), sess.canvas_w, sess.canvas_h)
         if stroke is None:
             return
-        session.strokes.append(stroke)
-        if len(session.strokes) > 500:
-            session.strokes = session.strokes[-500:]
-        await session.broadcast({"type": "stroke", "stroke": stroke}, exclude=ws)
+        sess.strokes.append(stroke)
+        if len(sess.strokes) > 500:
+            sess.strokes = sess.strokes[-500:]
+        rev = sess.bump()
+        await sess.broadcast(
+            {"type": "stroke", "stroke": stroke, "rev": rev, "room": sess.name},
+            exclude=ws,
+        )
     elif kind == "preview":
-        stroke = _clean_stroke(msg.get("stroke")) if msg.get("stroke") else None
-        await session.broadcast({"type": "preview", "stroke": stroke}, exclude=ws)
+        stroke = (
+            _clean_stroke(msg.get("stroke"), sess.canvas_w, sess.canvas_h)
+            if msg.get("stroke")
+            else None
+        )
+        await sess.broadcast({"type": "preview", "stroke": stroke}, exclude=ws)
     elif kind == "viewport":
-        if _apply_viewport(msg):
-            await session.broadcast({"type": "canvas", **session.canvas()})
-            await session.broadcast(session.state_message())
+        if _apply_viewport(sess, msg):
+            await sess.broadcast(
+                {"type": "canvas", "room": sess.name, "rev": sess.rev, **sess.canvas()}
+            )
+            await sess.broadcast(sess.state_message())
     elif kind == "undo":
-        if session.strokes:
-            session.strokes.pop()
-        await session.broadcast(session.state_message())
+        if sess.strokes:
+            sess.strokes.pop()
+        if not sess.strokes:
+            sess.canvas_locked = False
+        sess.bump()
+        await sess.broadcast(sess.state_message())
     elif kind == "clear":
-        session.strokes = []
-        session.last_result = None
-        await session.broadcast(session.state_message())
+        sess.strokes = []
+        sess.last_result = None
+        sess.canvas_locked = False
+        sess.bump()
+        await sess.broadcast(sess.state_message())
     elif kind == "recognize":
         try:
-            await _recognize_session(msg.get("engine", "auto"), msg.get("request_id"))
+            await _recognize_session(sess, msg.get("engine", "auto"), msg.get("request_id"))
         except Exception as exc:
-            await session.broadcast({"type": "error", "message": str(exc)})
+            await sess.broadcast({"type": "error", "message": str(exc), "room": sess.name})
 
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
+    room = _room_name(ws.query_params.get("room"))
+    sess = sessions.get(room)
     role = "host"
     registered = False
     try:
         hello = await ws.receive_json()
         if isinstance(hello, dict) and hello.get("role") in ("pad", "host"):
             role = hello["role"]
-        (session.pads if role == "pad" else session.hosts).add(ws)
+        (sess.pads if role == "pad" else sess.hosts).add(ws)
         registered = True
         if role == "pad" and isinstance(hello, dict) and hello.get("viewport"):
-            if _apply_viewport(hello["viewport"]):
-                await session.broadcast({"type": "canvas", **session.canvas()})
-        await ws.send_json(session.state_message())
-        if session.last_result is not None:
-            await ws.send_json(session.last_result)
-        await session.broadcast({"type": "peers", "pads": len(session.pads), "hosts": len(session.hosts)})
+            if _apply_viewport(sess, hello["viewport"]):
+                await sess.broadcast(
+                    {"type": "canvas", "room": room, "rev": sess.rev, **sess.canvas()}
+                )
+        await ws.send_json(sess.state_message())
+        if sess.last_result is not None:
+            await ws.send_json(sess.last_result)
+        await sess.broadcast(sess.peers_message())
 
         while True:
             msg = await ws.receive_json()
             if isinstance(msg, dict):
-                await _handle_message(ws, role, msg)
+                await _handle_message(sess, ws, role, msg)
     except WebSocketDisconnect:
         pass
     except Exception:
         pass
     finally:
         if registered:
-            session.pads.discard(ws)
-            session.hosts.discard(ws)
+            sess.pads.discard(ws)
+            sess.hosts.discard(ws)
             try:
-                await session.broadcast(
-                    {"type": "peers", "pads": len(session.pads), "hosts": len(session.hosts)}
-                )
+                await sess.broadcast(sess.peers_message())
             except Exception:
                 pass
 
@@ -391,6 +422,9 @@ def qr_png(data: str) -> Response:
 
 @app.get("/api/health")
 def health() -> dict:
+    rooms = sessions.snapshot()
+    total_pads = sum(r["pads"] for r in rooms.values())
+    total_hosts = sum(r["hosts"] for r in rooms.values())
     return {
         "ok": True,
         "engine": engine.name if engine else None,
@@ -401,7 +435,8 @@ def health() -> dict:
             "ready": bool(vlm_server and vlm_server.healthy()),
             "model_dir": str(VLM_DIR),
         },
-        "peers": {"pads": len(session.pads), "hosts": len(session.hosts)},
+        "rooms": rooms,
+        "peers": {"pads": total_pads, "hosts": total_hosts},
     }
 
 

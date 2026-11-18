@@ -17,7 +17,13 @@
   const messageEl = document.getElementById("message");
   const engineBadge = document.getElementById("engine-badge");
   const peerBadge = document.getElementById("peer-badge");
+  const roomBadge = document.getElementById("room-badge");
   const confidenceEl = document.getElementById("confidence");
+
+  const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/;
+  const roomParam = new URLSearchParams(location.search).get("room") || "main";
+  const room = ROOM_RE.test(roomParam) ? roomParam : "main";
+  roomBadge.textContent = `房间 ${room}`;
   const copyBtn = document.getElementById("copy");
   const recognizeBtn = document.getElementById("recognize");
   const clearBtn = document.getElementById("clear");
@@ -37,6 +43,7 @@
   let previewTimer = 0;
   let autoTimer = null;
   let pending = false;
+  let rev = 0;
 
   function toLogical(e) {
     const r = canvas.getBoundingClientRect();
@@ -327,10 +334,11 @@
     peerBadge.textContent = connected ? "平板已连接" : "等待平板";
     peerBadge.className = "badge " + (connected ? "badge-ok" : "badge-warn");
   }
-
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws = new WebSocket(
+      `${proto}://${location.host}/ws?room=${encodeURIComponent(room)}`
+    );
     ws.onopen = () => {
       engineBadge.textContent = "已连接";
       engineBadge.className = "badge badge-ok";
@@ -344,15 +352,18 @@
           LW = msg.canvas.w;
           LH = msg.canvas.h;
         }
+        if (typeof msg.rev === "number") rev = msg.rev;
         strokes = msg.strokes || [];
         preview = null;
         draw();
         updateInfo();
       } else if (msg.type === "canvas") {
+        if (typeof msg.rev === "number") rev = msg.rev;
         LW = msg.w;
         LH = msg.h;
         draw();
       } else if (msg.type === "stroke") {
+        if (typeof msg.rev === "number") rev = msg.rev;
         strokes.push(msg.stroke);
         preview = null;
         draw();
@@ -361,11 +372,16 @@
         preview = msg.stroke;
         draw();
       } else if (msg.type === "result") {
+        if (typeof msg.rev === "number" && msg.rev < rev) return; // stale
+        if (typeof msg.rev === "number") rev = msg.rev;
         pending = false;
         updateInfo();
         showResult(msg);
       } else if (msg.type === "peers") {
         setPeer((msg.pads || 0) > 0);
+        peerBadge.textContent = `平板 ${msg.pads || 0} · 主机 ${msg.hosts || 0}`;
+        peerBadge.className =
+          "badge " + ((msg.pads || 0) + (msg.hosts || 0) > 1 ? "badge-ok" : "badge-warn");
       } else if (msg.type === "error") {
         pending = false;
         updateInfo();
@@ -387,7 +403,8 @@
   fetch("/api/lan-info")
     .then((r) => r.json())
     .then((info) => {
-      const url = info.pad_url || `http://${info.ip}:${info.port}/pad`;
+      const base = info.pad_url || `http://${info.ip}:${info.port}/pad`;
+      const url = `${base}${base.includes("?") ? "&" : "?"}room=${encodeURIComponent(room)}`;
       document.getElementById("pad-url").textContent = url;
       document.getElementById("qr").src = `/api/qr.png?data=${encodeURIComponent(url)}`;
     })

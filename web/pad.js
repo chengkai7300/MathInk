@@ -16,15 +16,23 @@
   const modeSel = document.getElementById("mode");
   const autoBox = document.getElementById("auto");
   const recognizeBtn = document.getElementById("recognize");
+  const roomInfo = document.getElementById("room-info");
+
+  const ROOM_RE = /^[A-Za-z0-9_-]{1,32}$/;
+  const roomParam = new URLSearchParams(location.search).get("room") || "main";
+  const room = ROOM_RE.test(roomParam) ? roomParam : "main";
+  roomInfo.textContent = `房间 ${room}`;
 
   let strokes = [];
   let current = null;
+  let remotePreview = null;
   let drawing = false;
   let penSeen = false;
   let ws = null;
   let autoTimer = null;
   let previewTimer = 0;
   let busy = false;
+  let rev = 0;
   let W = 0, H = 0, dpr = 1;
 
   function resize() {
@@ -117,12 +125,19 @@
     ctx.stroke();
 
     for (const s of strokes) pathStroke(s);
+    if (remotePreview) pathStroke(remotePreview);
     if (current) pathStroke(current);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.strokeStyle = "#e8ebf3";
+    const rx = ox, ry = oy, rw = LW * scale, rh = LH * scale;
+    ctx.fillStyle = "rgba(15, 23, 42, .04)";
+    ctx.fillRect(0, 0, W, ry);
+    ctx.fillRect(0, ry + rh, W, H - (ry + rh));
+    ctx.fillRect(0, ry, rx, rh);
+    ctx.fillRect(rx + rw, ry, W - (rx + rw), rh);
+    ctx.strokeStyle = "#dfe4ef";
     ctx.lineWidth = 1;
-    ctx.strokeRect(dpr * ox, dpr * oy, dpr * LW * scale, dpr * LH * scale);
+    ctx.strokeRect(rx, ry, rw, rh);
   }
 
   function updateInfo() {
@@ -263,7 +278,9 @@
 
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws = new WebSocket(
+      `${proto}://${location.host}/ws?room=${encodeURIComponent(room)}`
+    );
     ws.onopen = () => {
       setConn("ok", "已连接");
       send({
@@ -281,19 +298,35 @@
           LW = msg.canvas.w;
           LH = msg.canvas.h;
         }
+        if (typeof msg.rev === "number") rev = msg.rev;
         strokes = msg.strokes || [];
         current = null;
+        remotePreview = null;
         drawing = false;
         updateInfo();
         draw();
       } else if (msg.type === "canvas") {
+        if (typeof msg.rev === "number") rev = msg.rev;
         LW = msg.w;
         LH = msg.h;
         draw();
+      } else if (msg.type === "stroke") {
+        if (typeof msg.rev === "number") rev = msg.rev;
+        remotePreview = null;
+        strokes.push(msg.stroke);
+        updateInfo();
+        draw();
+      } else if (msg.type === "preview") {
+        remotePreview = msg.stroke;
+        draw();
       } else if (msg.type === "peers") {
-        if ((msg.hosts || 0) > 0) setConn("ok", "主机已连接");
-        else setConn("warn", "等待主机");
+        const hosts = msg.hosts || 0;
+        const pads = msg.pads || 0;
+        if (hosts > 0) setConn("ok", `主机已连接 · 平板 ${pads}`);
+        else setConn("warn", `等待主机 · 平板 ${pads}`);
       } else if (msg.type === "result") {
+        if (typeof msg.rev === "number" && msg.rev < rev) return;
+        if (typeof msg.rev === "number") rev = msg.rev;
         busy = false;
         recognizeBtn.disabled = false;
         recognizeBtn.textContent = "识别";

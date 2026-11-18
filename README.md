@@ -12,7 +12,7 @@
 | --- | --- |
 | ![主机端](docs/assets/host.png) | ![平板端](docs/assets/pad.png) |
 
-> 状态：**v0.1.3-test**（2026-11-18）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
+> 状态：**v0.1.4-test**（2026-11-19）。Uni-MuMER 2B（GPU，默认）+ CoMER INT8（CPU，兜底）。
 > 非商用项目；CROHME 数据与权重仅限研究/自用。变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 使用方式
@@ -58,6 +58,27 @@ powershell -ExecutionPolicy Bypass -File start.ps1
 > `netsh advfirewall firewall add rule name="MathInk 8848" dir=in action=allow protocol=TCP localport=8848`。
 > 若主机页面显示的 IP 不对（VPN/虚拟网卡），启动前设 `MATHINK_LAN_IP=192.168.x.x`。
 
+### 多设备（局域网）
+
+一台 PC 做服务器，其他 PC / 平板通过浏览器接入：
+
+1. 服务器 PC 启动 MathInk，主机页会显示 `http://<局域网IP>:8848/pad` 和二维码
+2. 其他 PC 打开 `http://<服务器IP>:8848/`（默认 `main` 房间）
+3. 平板扫码进入书写页（二维码已带房间参数）
+
+同一房间内所有设备共享：画布笔画、实时预览、识别结果、在线设备数。
+任一设备触发识别，所有设备同步显示结果。
+
+独立房间：`http://<服务器IP>:8848/?room=team-a`，平板链接同理；不同房间完全隔离。
+
+其他 PC 打不开时，在服务器上以管理员运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\allow_firewall.ps1
+```
+
+> 服务监听 `0.0.0.0`；无鉴权，仅限可信局域网。识别在服务器 GPU 上串行执行，多设备显示端几乎无开销。
+
 ### 启动与停止
 
 ```powershell
@@ -98,6 +119,7 @@ powershell -ExecutionPolicy Bypass -File .\stop.ps1
 ## 功能
 
 - **双端实时同步**：平板笔画经 WebSocket 推到主机，主机实时镜像书写过程
+- **多设备房间**：局域网内多台 PC/平板加入同一房间，共享画布与识别结果；`?room=` 可隔离
 - **两种输入方式**：平板触控笔，或直接在 PC 主机画布上用鼠标 / 触屏写，共用同一画布
 - 平板端：触控笔压感变宽、手掌防误触、撤销/清空/识别、自动识别、全屏
 - 主机端：可直接书写、**停笔自动识别（可关）**、KaTeX 预览、可编辑 LaTeX、一键复制、最近 8 条历史
